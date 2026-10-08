@@ -1,7 +1,15 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# sca-trivy.sh - SCA com Trivy (TTL: 3h, Todas as Severidades, Unfixed Off)
+# sca-trivy.sh - SCA com Trivy (TTL: 3h, Todas as Severidades, Exceções Corporativas)
 # ==============================================================================
+
+if ! declare -f vuln_exceptions_load &>/dev/null; then
+    _SCRIPT_D="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    _TK_R="${TOOLKIT_ROOT:-$(cd "$_SCRIPT_D/../.." && pwd)}"
+    if [[ -f "$_TK_R/lib/common/vuln-exceptions.sh" ]]; then
+        source "$_TK_R/lib/common/vuln-exceptions.sh"
+    fi
+fi
 
 step_sca_universal() {
     local label="$1"
@@ -24,10 +32,26 @@ step_sca_universal() {
         target_hash="$(sha256sum pnpm-lock.yaml 2>/dev/null | awk '{print $1}')"
     fi
 
+    vuln_exceptions_load
+    local exc_digest
+    exc_digest="$(vuln_exceptions_digest)"
+    [[ -n "$target_hash" ]] && target_hash="${target_hash}.${exc_digest}"
+
     if [[ -n "$target_hash" ]] && cache_is_valid "trivy-sca" "$target_hash" 10800; then
         log_step "$label" "$desc" "OK" "Cache (3h)"
         summary_add "$desc" "OK" "Cache (3h)"
         return 0
+    fi
+
+    local ign_file="" ign_args=()
+    local valid_ids
+    valid_ids="$(vuln_exceptions_valid_ids)"
+    if [[ -n "$valid_ids" ]]; then
+        ign_file="/tmp/trivyignore_$$.txt"
+        printf '%s\n' "$valid_ids" > "$ign_file"
+        local ign_win
+        ign_win="$(cygpath -w "$ign_file" 2>/dev/null || echo "$ign_file")"
+        ign_args+=(--ignorefile "$ign_win")
     fi
 
     log_step_header "$label" "$desc"
@@ -53,6 +77,8 @@ step_sca_universal() {
 
         log_substep "Varrendo vulnerabilidades SBOM (Trivy)" "$trivy_bin" sbom "$sbom_file" \
             --scanners vuln \
+            --quiet \
+            "${ign_args[@]}" \
             --ignore-unfixed \
             --severity LOW,MEDIUM,HIGH,CRITICAL \
             --exit-code 1
@@ -62,6 +88,8 @@ step_sca_universal() {
     else
         log_substep "Varrendo dependências Angular (Trivy)" "$trivy_bin" fs . \
             --scanners vuln \
+            --quiet \
+            "${ign_args[@]}" \
             --ignore-unfixed \
             --severity LOW,MEDIUM,HIGH,CRITICAL \
             --exit-code 1
@@ -69,13 +97,22 @@ step_sca_universal() {
         exit_code=$?
     fi
 
+    [[ -n "$ign_file" ]] && rm -f "$ign_file"
+
     if [[ $exit_code -eq 0 ]]; then
         [[ -n "$target_hash" ]] && cache_save "trivy-sca" "$target_hash"
-        log_step "$label" "$desc" "OK"
-        summary_add "$desc" "OK"
+        local vx_detail=""
+        [[ ${#_VX_GROUPS[@]} -gt 0 ]] && vx_detail="$(vuln_exceptions_valid_ids | wc -l | tr -d ' ') exceção(ões) ativa(s)"
+        [[ -n "$(vuln_exceptions_expired_summary)" ]] && vx_detail="${vx_detail:+$vx_detail; }$(vuln_exceptions_expired_summary)"
+        log_step "$label" "$desc" "OK" "$vx_detail"
+        summary_add "$desc" "OK" "$vx_detail"
     else
+        local fail_detail="Atualize dependências com CVEs que possuem patch disponível"
+        local expired_note
+        expired_note="$(vuln_exceptions_expired_summary)"
+        [[ -n "$expired_note" ]] && fail_detail="$fail_detail; $expired_note"
         log_step "$label" "$desc" "FAIL"
-        summary_add "$desc" "FAIL" "Atualize dependências com CVEs que possuem patch disponível"
+        summary_add "$desc" "FAIL" "$fail_detail"
         log_show_last 30
     fi
     return $exit_code

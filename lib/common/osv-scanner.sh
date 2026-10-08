@@ -1,7 +1,15 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# osv-scanner.sh - SCA Rápido via Google OSV Database com fallback offline automático
+# osv-scanner.sh - SCA Rápido via Google OSV Database com Fallback Offline e Exceções
 # ==============================================================================
+
+if ! declare -f vuln_exceptions_load &>/dev/null; then
+    _SCRIPT_D="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    _TK_R="${TOOLKIT_ROOT:-$(cd "$_SCRIPT_D/../.." && pwd)}"
+    if [[ -f "$_TK_R/lib/common/vuln-exceptions.sh" ]]; then
+        source "$_TK_R/lib/common/vuln-exceptions.sh"
+    fi
+fi
 
 _OSV_NETWORK_PATTERNS='dial tcp|connection refused|i/o timeout|context deadline|no such host|network is unreachable|proxyconnect|proxy error|tls:|x509|unable to query|failed to query|failed to connect'
 
@@ -18,6 +26,46 @@ _osv_classify_output() {
     else
         printf 'FAIL'
     fi
+}
+
+_osv_extract_ids() {
+    printf '%s' "$1" | grep -oE 'https://osv\.dev/[A-Za-z0-9._-]+' | sed 's|https://osv.dev/||' | sort -u
+}
+
+# Classifica o veredito bruto aplicando as exceções corporativas.
+# Seta _VX_APPLIED/_VX_ORPHAN/_VX_UNEXCEPTED/_VX_EXPIRED_NOTE e imprime o veredito final.
+_osv_apply_exceptions() {
+    local verdict="$1"
+
+    if [[ "$verdict" != "FAIL" && "$verdict" != "OK" ]]; then
+        _VX_APPLIED=0
+        _VX_ORPHAN=0
+        _VX_UNEXCEPTED=0
+        _VX_EXPIRED_NOTE=""
+        printf '%s' "$verdict"
+        return 0
+    fi
+
+    vuln_exceptions_load
+    local ids
+    ids="$(_osv_extract_ids "$_LOG_LAST_OUTPUT")"
+    read -r _VX_APPLIED _VX_ORPHAN _VX_UNEXCEPTED <<< "$(vuln_exceptions_classify "$ids")"
+    _VX_EXPIRED_NOTE="$(vuln_exceptions_expired_summary)"
+
+    if [[ "$verdict" == "FAIL" && "$_VX_UNEXCEPTED" -eq 0 && "$_VX_APPLIED" -gt 0 ]]; then
+        printf 'OK'
+    else
+        printf '%s' "$verdict"
+    fi
+}
+
+_osv_exceptions_detail() {
+    local parts=""
+    [[ "${_VX_APPLIED:-0}" -gt 0 ]] && parts="${_VX_APPLIED} exceção(ões) aplicada(s)"
+    [[ "${_VX_UNEXCEPTED:-0}" -gt 0 ]] && parts="${parts:+$parts; }${_VX_UNEXCEPTED} vulnerabilidade(s) fora de exceção"
+    [[ "${_VX_ORPHAN:-0}" -gt 0 ]] && parts="${parts:+$parts; }${_VX_ORPHAN} exceção(ões) órfã(s) — remova do arquivo"
+    [[ -n "${_VX_EXPIRED_NOTE:-}" ]] && parts="${parts:+$parts; }${_VX_EXPIRED_NOTE}"
+    printf '%s' "$parts"
 }
 
 _osv_offline_db_dir() {
@@ -43,50 +91,36 @@ _osv_run_scan() {
     log_substep "Varrendo dependências OSV" "$bin" scan "$@"
 }
 
-_osv_report_ok() {
+_osv_settle() {
     local label="$1"
     local desc="$2"
-    local detail="${3:-}"
-    local hash="$4"
-    cache_save "osv-scanner" "$hash"
-    log_step "$label" "$desc" "OK" "$detail"
-    summary_add "$desc" "OK" "$detail"
-}
+    local hash="$3"
+    local mode_note="$4"
 
-_osv_report_fail() {
-    local label="$1"
-    local desc="$2"
-    local detail="$3"
-    log_step "$label" "$desc" "FAIL"
-    summary_add "$desc" "FAIL" "$detail"
-    log_show_last
-}
+    local verdict
+    verdict="$(_osv_classify_output "$_LOG_LAST_OUTPUT")"
+    verdict="$(_osv_apply_exceptions "$verdict")"
 
-_osv_report_skip() {
-    local label="$1"
-    local desc="$2"
-    local detail="$3"
-    log_step "$label" "$desc" "PULADO" "$detail"
-    summary_add "$desc" "SKIP" "$detail"
-}
-
-_osv_finalize() {
-    local label="$1"
-    local desc="$2"
-    local verdict="$3"
-    local hash="$4"
+    local detail
+    detail="$(_osv_exceptions_detail)"
+    [[ -n "$mode_note" ]] && detail="${detail:+$detail; }$mode_note"
 
     case "$verdict" in
         OK)
-            _osv_report_ok "$label" "$desc" "" "$hash"
+            cache_save "osv-scanner" "$hash"
+            log_step "$label" "$desc" "OK" "$detail"
+            summary_add "$desc" "OK" "$detail"
             return 0
             ;;
         SKIP)
-            _osv_report_skip "$label" "$desc" "Rede corporativa indisponível para consulta OSV"
+            log_step "$label" "$desc" "PULADO" "Rede corporativa indisponível para consulta OSV"
+            summary_add "$desc" "SKIP" "Rede corporativa indisponível para consulta OSV"
             return 0
             ;;
         *)
-            _osv_report_fail "$label" "$desc" "Vulnerabilidades identificadas pelo OSV-Scanner"
+            log_step "$label" "$desc" "FAIL"
+            summary_add "$desc" "FAIL" "${detail:-Vulnerabilidades identificadas pelo OSV-Scanner}"
+            log_show_last
             return 1
             ;;
     esac
@@ -99,7 +133,8 @@ step_osv_scanner() {
     [[ -f "$LOCAL_BIN/osv-scanner.exe" ]] && bin="$LOCAL_BIN/osv-scanner.exe"
 
     if ! command -v "$bin" &>/dev/null; then
-        _osv_report_skip "$label" "$desc" "osv-scanner não instalado"
+        log_step "$label" "$desc" "PULADO" "osv-scanner não instalado"
+        summary_add "$desc" "SKIP" "osv-scanner não instalado"
         return 0
     fi
 
@@ -121,8 +156,21 @@ step_osv_scanner() {
         return 0
     fi
 
+    local scan_args=()
+    if [[ "$scan_flag" == "--sbom" ]]; then
+        scan_args+=("-L" "$target_file")
+    else
+        scan_args+=("$scan_flag=$target_file")
+    fi
+
+    vuln_exceptions_load
+    local exc_digest
+    exc_digest="$(vuln_exceptions_digest)"
+
     local hash
     hash="$(sha256sum "$target_file" 2>/dev/null | awk '{print $1}')"
+    hash="${hash}.${exc_digest}"
+
     if cache_is_valid "osv-scanner" "$hash" 10800; then
         log_step "$label" "$desc" "OK" "Cache (3h)"
         summary_add "$desc" "OK" "Cache (3h)"
@@ -130,32 +178,17 @@ step_osv_scanner() {
     fi
 
     log_step_header "$label" "$desc"
-    _osv_run_scan "$bin" "$scan_flag=$target_file"
+    _osv_run_scan "$bin" "${scan_args[@]}"
 
     local verdict
     verdict="$(_osv_classify_output "$_LOG_LAST_OUTPUT")"
 
     if _osv_fallback_enabled "$verdict"; then
         export OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY="$(_osv_offline_db_dir)"
-        _osv_run_scan "$bin" --offline-vulnerabilities "$scan_flag=$target_file"
-        verdict="$(_osv_classify_output "$_LOG_LAST_OUTPUT")"
-
-        case "$verdict" in
-            OK)
-                _osv_report_ok "$label" "$desc" "Modo offline (base local OSV)" "$hash"
-                summary_add "$desc" "OK" "Modo offline aplicado: rede corporativa indisponível para consulta online"
-                return 0
-                ;;
-            SKIP)
-                _osv_report_skip "$label" "$desc" "Rede corporativa e base local OSV indisponíveis"
-                return 0
-                ;;
-            *)
-                _osv_report_fail "$label" "$desc" "Vulnerabilidades identificadas pelo OSV-Scanner (modo offline)"
-                return 1
-                ;;
-        esac
+        _osv_run_scan "$bin" --offline-vulnerabilities "${scan_args[@]}"
+        _osv_settle "$label" "$desc" "$hash" "Modo offline (base local OSV)"
+        return $?
     fi
 
-    _osv_finalize "$label" "$desc" "$verdict" "$hash"
+    _osv_settle "$label" "$desc" "$hash" ""
 }
