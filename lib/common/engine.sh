@@ -266,13 +266,13 @@ engine_print_failures() {
             if [[ "$state" =~ ^DONE_[1-9] ]]; then
                 local code="${state##DONE_}"
                 printf "\n${_C_BYELLOW}[FALHA] ETAPA %s/%s: %s (Status: %s)${_C_RESET}\n" "$s_num" "${#_ENG_ACTIVE_INDICES[@]}" "$desc" "$code"
-                printf "${_C_WHITE}----------------------------------------------------------------------${_C_RESET}\n"
+                printf '%s\n' "${_C_WHITE:-}----------------------------------------------------------------------${_C_RESET}"
                 if [[ -s "$log_path" ]]; then
                     tr -d '\000-\010\013\014\016-\032\034-\037' < "$log_path"
                 else
                     printf "  [Nenhuma saída registrada pelo comando]\n"
                 fi
-                printf "${_C_WHITE}----------------------------------------------------------------------${_C_RESET}\n"
+                printf '%s\n' "${_C_WHITE:-}----------------------------------------------------------------------${_C_RESET}"
             fi
         done
         printf "\n"
