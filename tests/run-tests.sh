@@ -252,14 +252,16 @@ test_engine_multi_deps() {
 test_vuln_exceptions() {
     printf "\n--- Teste 11: Exceções Corporativas de Vulnerabilidades ---\n"
 
+    # 1) Source no módulo REAL (TOOLKIT_ROOT ainda aponta para o toolkit)
+    source "$TOOLKIT_ROOT/lib/common/vuln-exceptions.sh"
+
+    # 2) Só então sobrescrever TOOLKIT_ROOT para o sandbox com o global.list de teste
     export TOOLKIT_ROOT="$SANDBOX/toolkit"
     mkdir -p "$TOOLKIT_ROOT/env/vuln-exceptions"
     cat > "$TOOLKIT_ROOT/env/vuln-exceptions/global.list" << 'EOF'
 CVE-2026-47884,GHSA-j9f9-w8pj-32f8|2099-12-31|Fix requer major upgrade
 CVE-2026-11111|2020-01-01|Exceção expirada
 EOF
-
-    source "$TOOLKIT_ROOT/lib/common/vuln-exceptions.sh"
 
     vuln_exceptions_load
     assert "2" "${#_VX_GROUPS[@]}" "Registro deve carregar 2 grupos de exceção"
