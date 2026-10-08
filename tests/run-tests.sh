@@ -34,7 +34,6 @@ setup() {
     git config user.name "Toolkit Tester"
     git config user.email "tester@toolkit.corp"
 }
-
 teardown() {
     cd "$TOOLKIT_ROOT" || exit 1
     rm -rf "$SANDBOX"
@@ -106,16 +105,14 @@ test_version_increments() {
     git checkout -b feature/minha-tarefa --quiet
     export BASE_BRANCH="main"
 
-    # Caso A: Versão idêntica -> DEVE FALHAR (retornar 1)
+    echo '<project><modelVersion>4.0.0</modelVersion><groupId>br.com.corp</groupId><artifactId>app</artifactId><version>1.0.0-SNAPSHOT</version></project>' > pom.xml
     step_version_check "STEP" "Versão Pom" >/dev/null 2>&1
     assert "1" "$?" "Versão idêntica à base deve falhar (1.0.0-SNAPSHOT == 1.0.0-SNAPSHOT)"
 
-    # Caso B: Versão inferior -> DEVE FALHAR (retornar 1)
     echo '<project><modelVersion>4.0.0</modelVersion><groupId>br.com.corp</groupId><artifactId>app</artifactId><version>0.9.0-SNAPSHOT</version></project>' > pom.xml
     step_version_check "STEP" "Versão Pom" >/dev/null 2>&1
     assert "1" "$?" "Versão regredida deve falhar (0.9.0-SNAPSHOT < 1.0.0-SNAPSHOT)"
 
-    # Caso C: Versão incrementada -> DEVE PASSAR (retornar 0)
     echo '<project><modelVersion>4.0.0</modelVersion><groupId>br.com.corp</groupId><artifactId>app</artifactId><version>1.0.1-SNAPSHOT</version></project>' > pom.xml
     step_version_check "STEP" "Versão Pom" >/dev/null 2>&1
     assert "0" "$?" "Versão incrementada deve ser aprovada (1.0.0-SNAPSHOT -> 1.0.1-SNAPSHOT)"
@@ -129,7 +126,6 @@ test_async_failures() {
 
     mock_fail_1() { echo "Erro critico 1"; return 1; }
     mock_fail_2() { echo "Erro critico 2"; return 1; }
-
     export TOGGLE_F1=1
     export TOGGLE_F2=1
 
@@ -143,7 +139,7 @@ test_async_failures() {
 
     local has_f1=0 has_f2=0
     grep -q "Erro critico 1" "$log_out" && has_f1=1
-    grep -q "Erro critico 2" "$log_out" && has_f1=1
+    grep -q "Erro critico 2" "$log_out" && has_f2=1
     rm -f "$log_out"
 
     assert "1" "$has_f1" "Log da falha 1 deve constar no relatório final"
@@ -162,6 +158,48 @@ test_spotbugs_incremental() {
     assert "0" "$?" "SpotBugs deve concluir com sucesso em 0s quando não houver arquivos Java alterados"
 }
 
+test_gitleaks_pull_scope() {
+    printf "\n--- Teste 7: Escopo do Gitleaks no Post-Merge ---\n"
+    source "$TOOLKIT_ROOT/lib/common/gitleaks.sh"
+
+    git update-ref -d ORIG_HEAD 2>/dev/null || true
+    assert "full" "$(_gitleaks_pull_scope)" "Sem ORIG_HEAD deve degradar para full scan"
+
+    git commit -m "init" --quiet --allow-empty
+    local base_sha
+    base_sha="$(git rev-parse HEAD)"
+
+    git update-ref ORIG_HEAD "$base_sha"
+    assert "empty" "$(_gitleaks_pull_scope)" "ORIG_HEAD igual a HEAD deve reportar nenhum commit recebido"
+
+    git commit -m "novo commit" --quiet --allow-empty
+    assert "range" "$(_gitleaks_pull_scope)" "Commits recebidos devem ser varridos por intervalo"
+}
+
+test_osv_classification() {
+    printf "\n--- Teste 8: Classificação de Saída do OSV-Scanner ---\n"
+    source "$TOOLKIT_ROOT/lib/common/osv-scanner.sh"
+
+    assert "OK" "$(_osv_classify_output "Total 0 packages affected")" "Zero vulnerabilidades deve aprovar"
+    assert "OK" "$(_osv_classify_output "No packages have known vulnerabilities, 0 known vulnerabilities")" "Saída de zero vulnerabilidades conhecidas deve aprovar"
+    assert "FAIL" "$(_osv_classify_output "Total 3 packages affected")" "Vulnerabilidades reais devem reprovar"
+    assert "SKIP" "$(_osv_classify_output "failed to query OSV database: dial tcp 127.0.0.1:443: i/o timeout")" "Falha de rede deve pular sem bloquear o fluxo"
+    assert "FAIL" "$(_osv_classify_output "erro inesperado de parsing do manifesto")" "Erro desconhecido deve reprovar (comportamento conservador)"
+}
+
+test_osv_offline_fallback() {
+    printf "\n--- Teste 9: Fallback Offline Automático do OSV-Scanner ---\n"
+    source "$TOOLKIT_ROOT/lib/common/osv-scanner.sh"
+
+    export DEV_TOOLKIT_CACHE_DIR="$SANDBOX/osv-cache"
+    assert "1" "$(_osv_fallback_enabled "SKIP"; echo $?)" "Sem base local, falha de rede não deve tentar fallback offline"
+
+    mkdir -p "$SANDBOX/osv-cache/osv-db/osv-scanner"
+    assert "0" "$(_osv_fallback_enabled "SKIP"; echo $?)" "Com base local, falha de rede deve ativar fallback offline"
+    assert "1" "$(_osv_fallback_enabled "FAIL"; echo $?)" "Vulnerabilidades reais não devem disparar fallback"
+    assert "1" "$(_osv_fallback_enabled "OK"; echo $?)" "Resultado online válido não deve disparar fallback"
+}
+
 setup
 test_cache_ttl
 test_toggles
@@ -169,6 +207,9 @@ test_angular_test_resolution
 test_version_increments
 test_async_failures
 test_spotbugs_incremental
+test_gitleaks_pull_scope
+test_osv_classification
+test_osv_offline_fallback
 teardown
 
 printf "\n==================================================\n"
