@@ -1,12 +1,18 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# semgrep.sh - SAST Semântico
+# semgrep.sh - SAST Semântico com Reparo de Runtime do Python
 # ==============================================================================
+
+_SEMGREP_PY_FAIL_PATTERNS='Traceback|ModuleNotFoundError|ImportError|Fatal Python error|unsupported Python|incompatible with this Python'
+
+_semgrep_is_portable() {
+    local py_dir="${DEV_TOOLKIT_PYTHON_DIR:-${TOOLKIT_ROOT}/dependencies/python}"
+    [[ "$1" == "${py_dir}/"* ]]
+}
 
 step_semgrep_sast() {
     local label="$1"
     local desc="$2"
-
     local py_dir="${DEV_TOOLKIT_PYTHON_DIR:-${TOOLKIT_ROOT}/dependencies/python}"
     local semgrep_bin=""
 
@@ -22,7 +28,6 @@ step_semgrep_sast() {
         return 0
     fi
 
-    # Filtra apenas arquivos modificados suportados pelo Semgrep
     local changed_files=()
     while IFS= read -r f; do
         [[ -n "$f" && -f "$f" ]] && changed_files+=("$f")
@@ -38,6 +43,15 @@ step_semgrep_sast() {
     log_substep "Analisando ${#changed_files[@]} arquivo(s) modificado(s)" \
         "$semgrep_bin" scan --config auto --error --quiet "${changed_files[@]}"
     local exit_code=$?
+
+    if [[ $exit_code -ne 0 ]] && [[ "$_LOG_LAST_OUTPUT" =~ $_SEMGREP_PY_FAIL_PATTERNS ]] && _semgrep_is_portable "$semgrep_bin"; then
+        bootstrap_python_repair
+        if _semgrep_works; then
+            log_substep "Reexecutando análise após reparo do Python" \
+                "$semgrep_bin" scan --config auto --error --quiet "${changed_files[@]}"
+            exit_code=$?
+        fi
+    fi
 
     if [[ $exit_code -eq 0 ]]; then
         log_step "$label" "$desc" "OK" "${#changed_files[@]} arquivo(s)"
