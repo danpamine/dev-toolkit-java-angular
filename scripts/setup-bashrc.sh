@@ -187,7 +187,7 @@ dev() {
             ;;
         base)
             if [ -z "${2:-}" ]; then
-                echo "Branch base atual: ${BASE_BRANCH:ddevelop}"
+                echo "Branch base atual: ${BASE_BRANCH:-develop}"
                 echo "Uso: dev base <nome-da-branch> (ex: dev base develop)"
                 return 0
             fi
@@ -202,8 +202,8 @@ dev() {
             bash "$DEV_TOOLKIT_HOME/scripts/install-hooks.sh" "${2:-.}" --remove
             ;;
         clean)
-            rm -rf "${DEV_TOOLKIT_CACHE_DIR:-/tmp/cicd_cache}/"* 2>/dev/null || true
-            echo "[OK] Cache de validações limpo"
+            find "${DEV_TOOLKIT_CACHE_DIR:-/tmp/cicd_cache}" -mindepth 1 -maxdepth 1 ! -name osv-db -exec rm -rf {} + 2>/dev/null || true
+            echo "[OK] Cache de validações limpo (base local do OSV preservada)"
             ;;
         setup-node)
             bash "$DEV_TOOLKIT_HOME/scripts/setup-node.sh"
@@ -222,7 +222,7 @@ dev() {
             echo "  dev build          Compila o projeto (mvn package | ng build)"
             echo "  dev hooks-install  Instala Git Hooks nos repositórios"
             echo "  dev hooks-remove   Remove Git Hooks"
-            echo "  dev clean          Limpa cache local"
+            echo "  dev clean          Limpa cache local (preserva a base local do OSV)"
             echo "  dev setup-node     Instala NVS + Node.js LTS + pnpm"
             ;;
     esac
