@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# engine.sh - Orquestrador Assíncrono com Propagação de Detalhes
+# engine.sh - Orquestrador Assíncrono com Propagação de Detalhes e Multi-Dependências
 # ==============================================================================
 
 declare -a _ENG_IDS=()
@@ -55,6 +55,70 @@ engine_is_enabled() {
     [[ "$val" == "1" || "$val" == "true" || "$val" == "yes" ]]
 }
 
+_engine_check_deps() {
+    local deps="$1"
+    [[ -z "$deps" ]] && { printf 'ready'; return 0; }
+
+    local d state failed=0 disabled=0 unmet=0
+    for d in ${deps//,/ }; do
+        state="${_ENG_STEP_STATE[$d]:-}"
+        if [[ "$state" == "DONE_0" ]]; then
+            continue
+        elif [[ "$state" =~ ^DONE_[1-9] || "$state" == "SKIPPED_DEP" ]]; then
+            failed=1
+        elif [[ -z "$state" ]]; then
+            disabled=1
+        else
+            unmet=1
+        fi
+    done
+
+    if [[ $failed -eq 1 ]]; then
+        printf 'failed'
+    elif [[ $disabled -eq 1 ]]; then
+        printf 'disabled'
+    elif [[ $unmet -eq 1 ]]; then
+        printf 'waiting'
+    else
+        printf 'ready'
+    fi
+}
+
+_engine_launch_step() {
+    local id="$1"
+    local label="$2"
+    local desc="$3"
+    local func="$4"
+    local dep_info="$5"
+
+    local out_file="${_ENG_TMP_DIR}/${id}.log"
+    local meta_file="${_ENG_TMP_DIR}/${id}.meta"
+    local substep_file="${_ENG_TMP_DIR}/${id}.substep"
+    local detail_file="${_ENG_TMP_DIR}/${id}.detail"
+    echo "" > "$substep_file"
+    echo "" > "$detail_file"
+
+    _ENG_STEP_STATE["$id"]="RUNNING"
+    printf "${_C_BOLD}[%s] %s${_C_RESET}\n" "$label" "$desc"
+    if [[ -n "$dep_info" ]]; then
+        printf "  ${_C_INFO}↳ Dependência [%s] concluída. Iniciando execução...${_C_RESET}\n" "$dep_info"
+    else
+        printf "  ${_C_INFO}↳ Em execução em segundo plano...${_C_RESET}\n"
+    fi
+
+    (
+        export _CURRENT_ENGINE_SUBSTEP_FILE="$substep_file"
+        export _CURRENT_ENGINE_DETAIL_FILE="$detail_file"
+        start_t=$(date +%s)
+        "$func" "$label" "$desc" > "$out_file" 2>&1
+        code=$?
+        end_t=$(date +%s)
+        duration=$((end_t - start_t))
+        echo "${code}:${duration}" > "$meta_file"
+    ) < /dev/null &
+    _ENG_STEP_PIDS["$id"]=$!
+}
+
 engine_run() {
     local suite_title="$1"
     local total_registered=${#_ENG_IDS[@]}
@@ -95,28 +159,7 @@ engine_run() {
         local label="ETAPA ${s_num}/${total_active}"
 
         if [[ -z "$dep" ]]; then
-            local out_file="${_ENG_TMP_DIR}/${id}.log"
-            local meta_file="${_ENG_TMP_DIR}/${id}.meta"
-            local substep_file="${_ENG_TMP_DIR}/${id}.substep"
-            local detail_file="${_ENG_TMP_DIR}/${id}.detail"
-            echo "" > "$substep_file"
-            echo "" > "$detail_file"
-
-            _ENG_STEP_STATE["$id"]="RUNNING"
-            printf "${_C_BOLD}[%s] %s${_C_RESET}\n" "$label" "$desc"
-            printf "  ${_C_INFO}↳ Em execução em segundo plano...${_C_RESET}\n"
-
-            (
-                export _CURRENT_ENGINE_SUBSTEP_FILE="$substep_file"
-                export _CURRENT_ENGINE_DETAIL_FILE="$detail_file"
-                start_t=$(date +%s)
-                "$func" "$label" "$desc" > "$out_file" 2>&1
-                code=$?
-                end_t=$(date +%s)
-                duration=$((end_t - start_t))
-                echo "${code}:${duration}" > "$meta_file"
-            ) < /dev/null &
-            _ENG_STEP_PIDS["$id"]=$!
+            _engine_launch_step "$id" "$label" "$desc" "$func" ""
         else
             _ENG_STEP_STATE["$id"]="WAITING"
             printf "${_C_BOLD}[%s] %s${_C_RESET}\n" "$label" "$desc"
@@ -138,33 +181,20 @@ engine_run() {
             local label="ETAPA ${s_num}/${total_active}"
 
             if [[ "${_ENG_STEP_STATE[$id]}" == "WAITING" ]]; then
-                if [[ "${_ENG_STEP_STATE[$dep]:-}" =~ ^DONE_0$ ]]; then
-                    local out_file="${_ENG_TMP_DIR}/${id}.log"
-                    local meta_file="${_ENG_TMP_DIR}/${id}.meta"
-                    local substep_file="${_ENG_TMP_DIR}/${id}.substep"
-                    local detail_file="${_ENG_TMP_DIR}/${id}.detail"
-                    echo "" > "$substep_file"
-                    echo "" > "$detail_file"
+                local dep_status
+                dep_status="$(_engine_check_deps "$dep")"
 
-                    _ENG_STEP_STATE["$id"]="RUNNING"
-                    printf "${_C_BOLD}[%s] %s${_C_RESET}\n" "$label" "$desc"
-                    printf "  ${_C_INFO}↳ Dependência [%s] concluída. Iniciando execução...${_C_RESET}\n" "$dep"
-
-                    (
-                        export _CURRENT_ENGINE_SUBSTEP_FILE="$substep_file"
-                        export _CURRENT_ENGINE_DETAIL_FILE="$detail_file"
-                        start_t=$(date +%s)
-                        "$func" "$label" "$desc" > "$out_file" 2>&1
-                        code=$?
-                        end_t=$(date +%s)
-                        duration=$((end_t - start_t))
-                        echo "${code}:${duration}" > "$meta_file"
-                    ) < /dev/null &
-                    _ENG_STEP_PIDS["$id"]=$!
-                elif [[ "${_ENG_STEP_STATE[$dep]:-}" =~ ^DONE_[1-9] || "${_ENG_STEP_STATE[$dep]:-}" == "SKIPPED_DEP" ]]; then
+                if [[ "$dep_status" == "ready" ]]; then
+                    _engine_launch_step "$id" "$label" "$desc" "$func" "$dep"
+                elif [[ "$dep_status" == "failed" ]]; then
                     _ENG_STEP_STATE["$id"]="SKIPPED_DEP"
                     log_step "$label" "$desc" "BLOCKED" "Dependência ($dep) falhou"
                     summary_add "$desc" "BLOCKED" "Dependência ($dep) falhou"
+                    ((pending_count--))
+                elif [[ "$dep_status" == "disabled" ]]; then
+                    _ENG_STEP_STATE["$id"]="SKIPPED_DEP"
+                    log_step "$label" "$desc" "PULADO" "Dependência ($dep) desativada"
+                    summary_add "$desc" "SKIP" "Dependência ($dep) desativada via Feature Toggle"
                     ((pending_count--))
                 fi
             fi
