@@ -85,12 +85,24 @@ _tool_update_osv_db() {
     cache_base="${cache_base%$'\r'}"
     local db_dir="${cache_base}/osv-db"
     mkdir -p "$db_dir" 2>/dev/null || true
-    if [[ -d "$db_dir/osv-scanner" ]] && ! _tool_update_due "OSV_DB"; then
+    # v2.6+ popula {db}/osv-scalibr/; versões anteriores, {db}/osv-scanner/
+    _osv_db_populated() {
+        [[ -d "$db_dir/osv-scalibr" || -d "$db_dir/osv-scanner" ]]
+    }
+    if _osv_db_populated && ! _tool_update_due "OSV_DB"; then
         return 0
     fi
+    # O download é dirigido pelos ecossistemas detectados no diretório alvo.
+    # O toolkit não tem lockfiles; o alvo correto é o projeto em execução (PWD).
+    local scan_target="${DEV_TOOLKIT_OSV_SYNC_DIR:-$PWD}"
     printf "${_C_INFO}[BOOTSTRAP]${_C_RESET} Sincronizando base local oficial do OSV (best effort)...\n"
-    OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY="$db_dir" "$bin" scan --offline-vulnerabilities --download-offline-databases "$TOOLKIT_ROOT" >/dev/null 2>&1 || true
-    _tool_update_marker_write "OSV_DB"
+    OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY="$db_dir" "$bin" scan --offline-vulnerabilities --download-offline-databases "$scan_target" >/dev/null 2>&1 || true
+    if _osv_db_populated; then
+        _tool_update_marker_write "OSV_DB"
+        printf "${_C_SUCCESS}[BOOTSTRAP]${_C_RESET} Base local do OSV sincronizada (%s)\n" "$scan_target"
+    else
+        printf "${_C_WARN}[BOOTSTRAP]${_C_RESET} Base OSV não populada (sem lockfiles detectáveis em %s). Fallback offline ficará indisponível.\n" "$scan_target"
+    fi
 }
 
 _toolkit_self_update_guard() {
