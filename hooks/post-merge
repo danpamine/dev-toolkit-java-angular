@@ -4,7 +4,6 @@
 # ==============================================================================
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 TOOLKIT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-
 source "$TOOLKIT_ROOT/lib/common/env.sh"
 source "$TOOLKIT_ROOT/lib/common/logging.sh"
 source "$TOOLKIT_ROOT/lib/common/cache.sh"
@@ -21,7 +20,7 @@ log_init "$REPO_NAME" "post-merge (git pull)"
 cache_init "$REPO_NAME"
 
 engine_reset
-engine_register "gitleaks-pull" "Varredura integral de segredos (Gitleaks)" step_gitleaks_full "FEATURE_GITLEAKS_PULL"
+engine_register "gitleaks-pull" "Varredura de segredos nas alterações recebidas (Gitleaks)" step_gitleaks_pull "FEATURE_GITLEAKS_PULL"
 engine_run "POST-MERGE (GIT PULL)"
 summary_print "RESUMO DO POST-MERGE" "Nenhum segredo detectado pós-pull." "Segredos detectados nas alterações recebidas!"
 engine_print_failures
