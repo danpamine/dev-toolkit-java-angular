@@ -200,6 +200,42 @@ test_osv_offline_fallback() {
     assert "1" "$(_osv_fallback_enabled "OK"; echo $?)" "Resultado online válido não deve disparar fallback"
 }
 
+test_engine_multi_deps() {
+    printf "\n--- Teste 10: DAG com Multi-Dependências ---\n"
+    source "$TOOLKIT_ROOT/lib/common/logging.sh"
+    source "$TOOLKIT_ROOT/lib/common/summary.sh"
+    source "$TOOLKIT_ROOT/lib/common/engine.sh"
+
+    mock_ok() { return 0; }
+    mock_fail() { return 1; }
+    export TOGGLE_M1=1
+    export TOGGLE_M2=1
+    export TOGGLE_M3=1
+
+    engine_reset
+    engine_register "m1" "Dependência A" mock_ok "TOGGLE_M1"
+    engine_register "m2" "Dependência B" mock_ok "TOGGLE_M2"
+    engine_register "m3" "Dependente" mock_ok "TOGGLE_M3" "m1,m2"
+    engine_run "TESTE MULTI-DEP OK" >/dev/null 2>&1
+    assert "DONE_0" "${_ENG_STEP_STATE[m3]:-}" "Dependente com duas dependências concluídas deve executar"
+
+    engine_reset
+    engine_register "m1" "Dependência A" mock_fail "TOGGLE_M1"
+    engine_register "m2" "Dependência B" mock_ok "TOGGLE_M2"
+    engine_register "m3" "Dependente" mock_ok "TOGGLE_M3" "m1,m2"
+    engine_run "TESTE MULTI-DEP FALHA" >/dev/null 2>&1
+    assert "SKIPPED_DEP" "${_ENG_STEP_STATE[m3]:-}" "Falha em qualquer dependência deve bloquear o dependente"
+
+    export TOGGLE_M2=0
+    engine_reset
+    engine_register "m1" "Dependência A" mock_ok "TOGGLE_M1"
+    engine_register "m2" "Dependência B" mock_ok "TOGGLE_M2"
+    engine_register "m3" "Dependente" mock_ok "TOGGLE_M3" "m1,m2"
+    engine_run "TESTE MULTI-DEP DESATIVADA" >/dev/null 2>&1
+    assert "SKIPPED_DEP" "${_ENG_STEP_STATE[m3]:-}" "Dependência desativada por toggle deve pular o dependente"
+    export TOGGLE_M2=1
+}
+
 setup
 test_cache_ttl
 test_toggles
@@ -210,6 +246,7 @@ test_spotbugs_incremental
 test_gitleaks_pull_scope
 test_osv_classification
 test_osv_offline_fallback
+test_engine_multi_deps
 teardown
 
 printf "\n==================================================\n"
