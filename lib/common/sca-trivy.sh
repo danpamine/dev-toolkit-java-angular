@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# sca-trivy.sh - SCA com Trivy + Syft (TTL: 3h, Todas as Severidades, Unfixed Off)
+# sca-trivy.sh - SCA com Trivy (TTL: 3h, Todas as Severidades, Unfixed Off)
 # ==============================================================================
 
 step_sca_universal() {
     local label="$1"
     local desc="$2"
-
     local trivy_bin="trivy"
     [[ -f "$LOCAL_BIN/trivy.exe" ]] && trivy_bin="$LOCAL_BIN/trivy.exe"
 
@@ -25,7 +24,6 @@ step_sca_universal() {
         target_hash="$(sha256sum pnpm-lock.yaml 2>/dev/null | awk '{print $1}')"
     fi
 
-    # TTL fixado rigorosamente em 3 horas (10800 segundos)
     if [[ -n "$target_hash" ]] && cache_is_valid "trivy-sca" "$target_hash" 10800; then
         log_step "$label" "$desc" "OK" "Cache (3h)"
         summary_add "$desc" "OK" "Cache (3h)"
@@ -36,25 +34,31 @@ step_sca_universal() {
     local exit_code=0
 
     if [[ -f "pom.xml" ]]; then
-        local syft_bin="syft"
-        [[ -f "$LOCAL_BIN/syft.exe" ]] && syft_bin="$LOCAL_BIN/syft.exe"
-        local tmp_sbom="/tmp/sbom_java_$$.json"
-
-        if command -v "$syft_bin" &>/dev/null; then
-            log_substep "Gerando SBOM via Syft" "$syft_bin" scan dir:. -o cyclonedx-json="$tmp_sbom" -q
+        local sbom_file=""
+        if [[ -f "target/bom.json" ]]; then
+            sbom_file="target/bom.json"
         else
-            log_substep "Gerando SBOM via Maven CycloneDX" mvn org.cyclonedx:cyclonedx-maven-plugin:RELEASE:makeBom -DoutputFormat=json -DoutputName=sbom -q
-            [[ -f "target/sbom.json" ]] && cp target/sbom.json "$tmp_sbom"
+            local syft_bin="syft"
+            [[ -f "$LOCAL_BIN/syft.exe" ]] && syft_bin="$LOCAL_BIN/syft.exe"
+            local tmp_sbom="/tmp/sbom_java_$$.json"
+
+            if command -v "$syft_bin" &>/dev/null; then
+                log_substep "Gerando SBOM via Syft" "$syft_bin" scan dir:. -o cyclonedx-json="$tmp_sbom" -q
+            else
+                log_substep "Gerando SBOM via Maven CycloneDX" mvn org.cyclonedx:cyclonedx-maven-plugin:RELEASE:makeBom -DoutputFormat=json -DoutputName=sbom -q
+                [[ -f "target/sbom.json" ]] && cp target/sbom.json "$tmp_sbom"
+            fi
+            sbom_file="$tmp_sbom"
         fi
 
-        log_substep "Varrendo vulnerabilidades SBOM (Trivy)" "$trivy_bin" sbom "$tmp_sbom" \
+        log_substep "Varrendo vulnerabilidades SBOM (Trivy)" "$trivy_bin" sbom "$sbom_file" \
             --scanners vuln \
             --ignore-unfixed \
             --severity LOW,MEDIUM,HIGH,CRITICAL \
             --exit-code 1
 
         exit_code=$?
-        rm -f "$tmp_sbom"
+        [[ "$sbom_file" == /tmp/* ]] && rm -f "$sbom_file"
     else
         log_substep "Varrendo dependências Angular (Trivy)" "$trivy_bin" fs . \
             --scanners vuln \
