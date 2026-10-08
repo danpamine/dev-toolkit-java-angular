@@ -43,7 +43,7 @@ printf "  Toolkit: %s\n" "$TOOLKIT_ROOT"
 printf "  Hooks:   %s\n" "$HOOKS_DIR"
 printf "  Busca:   %s\n" "$ROOT_DIR"
 printf "  Mode:    %s\n" "$([[ "$ACTION" == "dry-run" ]] && echo "DRY-RUN" || echo "$ACTION")"
-printf "${C_INFO}--------------------------------------------------${C_RESET}\n"
+printf '%s\n' "${C_INFO:-}--------------------------------------------------${C_RESET:-}"
 
 printf "Buscando projetos Java (pom.xml) e Angular (angular.json)...\n\n"
 found_repos=()
