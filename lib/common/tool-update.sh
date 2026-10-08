@@ -85,6 +85,22 @@ _tool_update_osv_db() {
     _tool_update_marker_write "OSV_DB"
 }
 
+_toolkit_self_update_guard() {
+    [[ "${DEV_TOOLKIT_NO_UPDATE:-0}" == "1" ]] && return 0
+    type toolkit_auto_update &>/dev/null || return 0
+
+    local pre_sha post_sha
+    pre_sha="$(git -C "$TOOLKIT_ROOT" rev-parse HEAD 2>/dev/null)"
+    toolkit_auto_update
+    post_sha="$(git -C "$TOOLKIT_ROOT" rev-parse HEAD 2>/dev/null)"
+
+    if [[ -n "$pre_sha" && -n "$post_sha" && "$pre_sha" != "$post_sha" ]]; then
+        printf "${_C_BYELLOW}[AUTO-UPDATE]${_C_RESET} Dev Toolkit atualizado (%s -> %s).\n" "${pre_sha:0:7}" "${post_sha:0:7}"
+        printf "${_C_BYELLOW}[AUTO-UPDATE]${_C_RESET} Validação abortada: execute o comando novamente para validar com a versão atual.\n"
+        exit 1
+    fi
+}
+
 bootstrap_ensure_tool() {
     local tool="$1"
 
@@ -132,6 +148,8 @@ bootstrap_ensure_tool() {
 }
 
 bootstrap_prepare() {
+    _toolkit_self_update_guard
+
     local local_bin="${LOCAL_BIN:-$HOME/.local/bin}"
     local deps_dir="${DEV_TOOLKIT_DEPENDENCIES_DIR:-${TOOLKIT_ROOT}/dependencies}"
     mkdir -p "$local_bin" "$deps_dir" 2>/dev/null || true

@@ -36,7 +36,6 @@ REPO_NAME="$(basename "$(pwd)")"
 LOCAL_BIN="${LOCAL_BIN:-$HOME/.local/bin}"
 export PATH="$LOCAL_BIN:$PATH"
 
-toolkit_auto_update
 env_load
 log_init "$REPO_NAME" "verify"
 cache_init "$REPO_NAME"

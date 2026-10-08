@@ -38,7 +38,6 @@ REPO_NAME="$(basename "$(pwd)")"
 LOCAL_BIN="${LOCAL_BIN:-$HOME/.local/bin}"
 export PATH="$LOCAL_BIN:$PATH"
 
-toolkit_auto_update
 env_load
 log_init "$REPO_NAME" "verify"
 cache_init "$REPO_NAME"
@@ -46,18 +45,18 @@ cache_init "$REPO_NAME"
 engine_reset
 engine_register "gitleaks" "Checando segredos em todo o repositório (Gitleaks)" step_gitleaks_full "FEATURE_GITLEAKS"
 engine_register "format" "Formatando arquivos Java alterados (GJF)" step_java_format "FEATURE_JAVA_FORMAT"
-engine_register "checkstyle" "Verificando regras de estilo (Checkstyle)" step_checkstyle "FEATURE_CHECKSTYLE"
 engine_register "ast-grep" "Linter estrutural de AST (ast-grep)" step_ast_grep "FEATURE_AST_GREP"
 engine_register "version" "Validando incremento de versão no pom.xml" step_version_check "FEATURE_VERSION_CHECK"
 engine_register "semgrep" "Análise SAST semântica (Semgrep)" step_semgrep_sast "FEATURE_SEMGREP"
 engine_register "build" "Compilando projeto (mvn test-compile)" step_java_build ""
-engine_register "sbom" "Gerando SBOM CycloneDX (Syft)" step_sbom_generate ""
+engine_register "sbom" "Gerando SBOM CycloneDX (Maven)" step_sbom_generate "" "build"
 engine_register "sca" "Analisando vulnerabilidades (Trivy SCA)" step_sca_universal "FEATURE_SCA" "sbom"
 engine_register "osv" "Analisando vulnerabilidades (OSV-Scanner)" step_osv_scanner "FEATURE_OSV" "sbom"
-engine_register "pmd" "Análise estática de qualidade (PMD)" step_pmd "FEATURE_PMD" "build"
-engine_register "openapi" "Validando contratos de API (OpenAPI)" step_openapi_validate "FEATURE_OPENAPI" "build"
-engine_register "spotbugs" "Análise SAST SpotBugs + FindSecBugs" step_spotbugs "FEATURE_SPOTBUGS" "build"
-engine_register "verify" "Compilação, Testes e JaCoCo (Maven)" step_maven_verify "FEATURE_MAVEN_VERIFY" "build"
+engine_register "checkstyle" "Verificando regras de estilo (Checkstyle)" step_checkstyle "FEATURE_CHECKSTYLE" "build,sbom"
+engine_register "spotbugs" "Análise SAST SpotBugs + FindSecBugs" step_spotbugs "FEATURE_SPOTBUGS" "build,sbom,checkstyle"
+engine_register "pmd" "Análise estática de qualidade (PMD)" step_pmd "FEATURE_PMD" "build,sbom,checkstyle,spotbugs"
+engine_register "openapi" "Validando contratos de API (OpenAPI)" step_openapi_validate "FEATURE_OPENAPI" "build,sbom,checkstyle,spotbugs,pmd"
+engine_register "verify" "Compilação, Testes e JaCoCo (Maven)" step_maven_verify "FEATURE_MAVEN_VERIFY" "build,sbom,checkstyle,spotbugs,pmd,openapi"
 bootstrap_prepare
 
 engine_run "VALIDAÇÃO COMPLETA DO PROJETO"
