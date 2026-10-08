@@ -36,7 +36,7 @@ step_java_build() {
     local hash
     hash=$( (sha256sum pom.xml 2>/dev/null; sha256sum "${changed_java_files[@]}" 2>/dev/null) | sha256sum | awk '{print $1}')
 
-    if cache_is_valid "java-build" "$hash"; then
+    if cache_is_valid "java-build" "$hash" && [[ -d "target" ]]; then
         log_step "$label" "$desc" "OK" "Cache"
         [[ -n "${_CURRENT_ENGINE_DETAIL_FILE:-}" ]] && echo "Cache" > "$_CURRENT_ENGINE_DETAIL_FILE"
         summary_add "$desc" "OK" "Cache"
@@ -44,6 +44,8 @@ step_java_build() {
     fi
 
     log_step_header "$label" "$desc"
+
+    rm -rf "target" 2>/dev/null || true
     log_substep "Compilando projeto (mvn test-compile)" mvn test-compile -q -DskipTests
     local exit_code=$?
 
