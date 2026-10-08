@@ -11,3 +11,4 @@ logs/*
 .env.user
 **/.env.user
 env/**/*.env
+env/vuln-exceptions/*.list
