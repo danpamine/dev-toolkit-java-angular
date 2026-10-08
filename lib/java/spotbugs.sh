@@ -29,7 +29,6 @@ step_spotbugs() {
         return 0
     fi
 
-    # 1. Filtra apenas arquivos Java alterados
     local changed_java_files=()
     while IFS= read -r f; do
         [[ -n "$f" && -f "$f" ]] && changed_java_files+=("$f")
@@ -42,7 +41,6 @@ step_spotbugs() {
         return 0
     fi
 
-    # 2. Extrai classes de produção (ignora src/test/)
     local target_classes=()
     for f in "${changed_java_files[@]}"; do
         if [[ "$f" =~ (^|/)src/test/ ]]; then
@@ -73,7 +71,6 @@ step_spotbugs() {
         [[ -n "$c" ]] && unique_classes+=("$c")
     done < <(printf '%s\n' "${target_classes[@]}" | sort -u)
 
-    # 3. Validação de Cache
     local hash
     hash=$( (sha256sum pom.xml 2>/dev/null; sha256sum "${changed_java_files[@]}" 2>/dev/null) | sha256sum | awk '{print $1}')
 
@@ -87,7 +84,6 @@ step_spotbugs() {
     local class_filter
     class_filter=$(IFS=,; echo "${unique_classes[*]}")
 
-    # 4. Resolução dinâmica de versões no Maven Central (Zero hardcoded)
     local spotbugs_ver findsecbugs_ver
     spotbugs_ver="$(maven_resolve_plugin_version "com/github/spotbugs" "spotbugs-maven-plugin" "${SPOTBUGS_PLUGIN_VERSION:-}")"
     findsecbugs_ver="$(maven_resolve_plugin_version "com/h3xstream/findsecbugs" "findsecbugs-plugin" "${FINDSECBUGS_PLUGIN_VERSION:-}")"
@@ -101,22 +97,10 @@ step_spotbugs() {
 
     log_step_header "$label" "$desc"
 
-    # 5. Compilação estrita
-    log_substep "Compilando classes para análise SAST" mvn test-compile -q -DskipTests
-    local compile_exit=$?
-    if [[ $compile_exit -ne 0 ]]; then
-        log_step "$label" "$desc" "FAIL" "Falha na compilação"
-        [[ -n "${_CURRENT_ENGINE_DETAIL_FILE:-}" ]] && echo "Falha na compilação" > "$_CURRENT_ENGINE_DETAIL_FILE"
-        summary_add "$desc" "FAIL" "Falha ao compilar classes para SpotBugs"
-        log_show_last
-        return $compile_exit
-    fi
-
-    # 6. Execução estrita do SpotBugs + FindSecBugs
     log_substep "Executando SpotBugs v${spotbugs_ver} + FindSecBugs v${findsecbugs_ver} (${#unique_classes[@]} classe(s))" \
         mvn com.github.spotbugs:spotbugs-maven-plugin:"${spotbugs_ver}":check \
             -Dspotbugs.effort=max \
-            -Dspotbugs.threshold=medium \
+            -Dspotbugs.threshold=low \
             -Dspotbugs.failOnError=true \
             -Dspotbugs.plugins=com.h3xstream.findsecbugs:findsecbugs-plugin:"${findsecbugs_ver}" \
             -Dspotbugs.onlyAnalyze="$class_filter" \
@@ -130,10 +114,8 @@ step_spotbugs() {
         log_step "$label" "$desc" "OK" "$detail_msg"
         summary_add "$desc" "OK" "$detail_msg"
     else
-        local detail_msg="Vulnerabilidades em ${#unique_classes[@]} classe(s)"
-        [[ -n "${_CURRENT_ENGINE_DETAIL_FILE:-}" ]] && echo "$detail_msg" > "$_CURRENT_ENGINE_DETAIL_FILE"
-        log_step "$label" "$desc" "FAIL" "$detail_msg"
-        summary_add "$desc" "FAIL" "Vulnerabilidades SAST detectadas pelo SpotBugs"
+        log_step "$label" "$desc" "FAIL"
+        summary_add "$desc" "FAIL" "Vulnerabilidades detectadas pelo SpotBugs + FindSecBugs"
         log_show_last
     fi
     return $exit_code
