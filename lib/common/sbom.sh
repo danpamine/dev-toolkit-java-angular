@@ -22,7 +22,7 @@ step_sbom_generate() {
     local hash
     hash="$(sha256sum pom.xml 2>/dev/null | awk '{print $1}')"
 
-    if cache_is_valid "sbom" "$hash"; then
+    if cache_is_valid "sbom" "$hash" && [[ -f "target/bom.json" ]]; then
         log_step "$label" "$desc" "OK" "Cache"
         [[ -n "${_CURRENT_ENGINE_DETAIL_FILE:-}" ]] && echo "Cache" > "$_CURRENT_ENGINE_DETAIL_FILE"
         summary_add "$desc" "OK" "Cache"
@@ -30,13 +30,16 @@ step_sbom_generate() {
     fi
 
     log_step_header "$label" "$desc"
-    local syft_bin="syft"
-    [[ -f "$LOCAL_BIN/syft.exe" ]] && syft_bin="$LOCAL_BIN/syft.exe"
 
-    if command -v "$syft_bin" &>/dev/null; then
-        log_substep "Gerando SBOM via Syft (target/bom.json)" "$syft_bin" scan dir:. -o cyclonedx-json="target/bom.json" -q
-    else
-        log_substep "Gerando SBOM via Maven CycloneDX (target/bom.json)" mvn org.cyclonedx:cyclonedx-maven-plugin:RELEASE:makeBom -DoutputFormat=json -DoutputName=bom -q
+    log_substep "Gerando SBOM via Maven CycloneDX (target/bom.json)" \
+        mvn org.cyclonedx:cyclonedx-maven-plugin:RELEASE:makeBom -DoutputFormat=json -DoutputName=bom -q
+
+    if [[ ! -f "target/bom.json" ]]; then
+        local syft_bin="syft"
+        [[ -f "$LOCAL_BIN/syft.exe" ]] && syft_bin="$LOCAL_BIN/syft.exe"
+        if command -v "$syft_bin" &>/dev/null; then
+            log_substep "Gerando SBOM via Syft (fallback)" "$syft_bin" scan dir:. -o cyclonedx-json="target/bom.json" -q
+        fi
     fi
 
     if [[ -f "target/bom.json" ]]; then
