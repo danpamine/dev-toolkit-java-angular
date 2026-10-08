@@ -59,7 +59,7 @@ _engine_check_deps() {
     local deps="$1"
     [[ -z "$deps" ]] && { printf 'ready'; return 0; }
 
-    local d state failed=0 disabled=0 unmet=0
+    local d state failed=0 waiting=0
     for d in ${deps//,/ }; do
         state="${_ENG_STEP_STATE[$d]:-}"
         if [[ "$state" == "DONE_0" ]]; then
@@ -67,17 +67,15 @@ _engine_check_deps() {
         elif [[ "$state" =~ ^DONE_[1-9] || "$state" == "SKIPPED_DEP" ]]; then
             failed=1
         elif [[ -z "$state" ]]; then
-            disabled=1
+            continue
         else
-            unmet=1
+            waiting=1
         fi
     done
 
     if [[ $failed -eq 1 ]]; then
         printf 'failed'
-    elif [[ $disabled -eq 1 ]]; then
-        printf 'disabled'
-    elif [[ $unmet -eq 1 ]]; then
+    elif [[ $waiting -eq 1 ]]; then
         printf 'waiting'
     else
         printf 'ready'
@@ -190,11 +188,6 @@ engine_run() {
                     _ENG_STEP_STATE["$id"]="SKIPPED_DEP"
                     log_step "$label" "$desc" "BLOCKED" "Dependência ($dep) falhou"
                     summary_add "$desc" "BLOCKED" "Dependência ($dep) falhou"
-                    ((pending_count--))
-                elif [[ "$dep_status" == "disabled" ]]; then
-                    _ENG_STEP_STATE["$id"]="SKIPPED_DEP"
-                    log_step "$label" "$desc" "PULADO" "Dependência ($dep) desativada"
-                    summary_add "$desc" "SKIP" "Dependência ($dep) desativada via Feature Toggle"
                     ((pending_count--))
                 fi
             fi
