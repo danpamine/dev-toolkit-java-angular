@@ -4,7 +4,6 @@
 # ==============================================================================
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 TOOLKIT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-
 export _CURRENT_HOOK_ACTION="pre-commit"
 
 source "$TOOLKIT_ROOT/lib/common/env.sh"
@@ -14,6 +13,7 @@ source "$TOOLKIT_ROOT/lib/common/bootstrap.sh"
 source "$TOOLKIT_ROOT/lib/common/updater.sh"
 source "$TOOLKIT_ROOT/lib/common/summary.sh"
 source "$TOOLKIT_ROOT/lib/common/engine.sh"
+source "$TOOLKIT_ROOT/lib/common/tool-update.sh"
 source "$TOOLKIT_ROOT/lib/common/commands.sh"
 source "$TOOLKIT_ROOT/lib/angular/bootstrap.sh"
 
@@ -33,8 +33,6 @@ toolkit_auto_update
 env_load
 log_init "$REPO_NAME" "pre-commit"
 cache_init "$REPO_NAME"
-bootstrap_all
-bootstrap_angular
 
 engine_reset
 engine_register "gitleaks" "Checando segredos no código (Gitleaks)" step_gitleaks_commit "FEATURE_GITLEAKS"
@@ -42,9 +40,7 @@ engine_register "prettier" "Formatando arquivos alterados (Prettier)" step_angul
 engine_register "lockfile" "Sincronizando package-lock.json" step_lockfile_sync "FEATURE_LOCKFILE"
 engine_register "eslint" "Verificando regras de lint (ESLint)" step_angular_eslint "FEATURE_ESLINT"
 engine_register "ast-grep" "Linter estrutural de AST (ast-grep)" step_ast_grep "FEATURE_AST_GREP"
+bootstrap_prepare
 
 engine_run "PRE-COMMIT ANGULAR"
 summary_print "RESUMO DA VALIDAÇÃO PRE-COMMIT" "Commit aprovado!" "Corrija os erros apontados antes de commitar."
-
-summary_has_failures && exit 1
-exit 0

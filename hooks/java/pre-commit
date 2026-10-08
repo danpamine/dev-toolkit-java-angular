@@ -4,7 +4,6 @@
 # ==============================================================================
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 TOOLKIT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-
 export _CURRENT_HOOK_ACTION="pre-commit"
 
 source "$TOOLKIT_ROOT/lib/common/env.sh"
@@ -14,6 +13,7 @@ source "$TOOLKIT_ROOT/lib/common/bootstrap.sh"
 source "$TOOLKIT_ROOT/lib/common/updater.sh"
 source "$TOOLKIT_ROOT/lib/common/summary.sh"
 source "$TOOLKIT_ROOT/lib/common/engine.sh"
+source "$TOOLKIT_ROOT/lib/common/tool-update.sh"
 source "$TOOLKIT_ROOT/lib/common/commands.sh"
 
 source "$TOOLKIT_ROOT/lib/common/gitleaks.sh"
@@ -31,16 +31,12 @@ toolkit_auto_update
 env_load
 log_init "$REPO_NAME" "pre-commit"
 cache_init "$REPO_NAME"
-bootstrap_all
 
 engine_reset
 engine_register "gitleaks" "Checando segredos no código (Gitleaks)" step_gitleaks_commit "FEATURE_GITLEAKS"
 engine_register "format" "Formatando arquivos Java alterados (GJF)" step_java_format "FEATURE_JAVA_FORMAT"
 engine_register "checkstyle" "Verificando regras de estilo (Checkstyle)" step_checkstyle "FEATURE_CHECKSTYLE"
 engine_register "ast-grep" "Linter estrutural de AST (ast-grep)" step_ast_grep "FEATURE_AST_GREP"
+bootstrap_prepare
 
 engine_run "PRE-COMMIT JAVA"
-summary_print "RESUMO DA VALIDAÇÃO PRE-COMMIT" "Commit aprovado!" "Corrija os desvios antes de commitar."
-
-summary_has_failures && exit 1
-exit 0

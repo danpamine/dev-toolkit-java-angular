@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# verify (Angular) - Validação Completa Assíncrona via Engine
+# verify (Angular) - Validação Completa sob Demanda
 # ==============================================================================
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 TOOLKIT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-
 export _CURRENT_HOOK_ACTION="verify"
 
 source "$TOOLKIT_ROOT/lib/common/env.sh"
@@ -15,6 +14,7 @@ source "$TOOLKIT_ROOT/lib/common/bootstrap.sh"
 source "$TOOLKIT_ROOT/lib/common/updater.sh"
 source "$TOOLKIT_ROOT/lib/common/summary.sh"
 source "$TOOLKIT_ROOT/lib/common/engine.sh"
+source "$TOOLKIT_ROOT/lib/common/tool-update.sh"
 source "$TOOLKIT_ROOT/lib/common/commands.sh"
 source "$TOOLKIT_ROOT/lib/angular/bootstrap.sh"
 
@@ -40,8 +40,6 @@ toolkit_auto_update
 env_load
 log_init "$REPO_NAME" "verify"
 cache_init "$REPO_NAME"
-bootstrap_all
-bootstrap_angular
 
 engine_reset
 engine_register "gitleaks" "Checando segredos em todo o repositório (Gitleaks)" step_gitleaks_full "FEATURE_GITLEAKS"
@@ -55,6 +53,7 @@ engine_register "osv" "Analisando vulnerabilidades (OSV-Scanner)" step_osv_scann
 engine_register "semgrep" "Análise SAST semântica (Semgrep)" step_semgrep_sast "FEATURE_SEMGREP"
 engine_register "build" "Compilando projeto (ng build)" step_angular_build "FEATURE_BUILD"
 engine_register "test" "Executando testes unitários (package.json)" step_angular_test "FEATURE_TEST" "build"
+bootstrap_prepare
 
 engine_run "VALIDAÇÃO COMPLETA DO PROJETO"
 summary_print "RESUMO DA VALIDAÇÃO COMPLETA" "O projeto atende a todos os critérios de qualidade e segurança!" "O projeto NÃO atende aos critérios de validação."
