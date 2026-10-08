@@ -30,7 +30,10 @@ setup() {
     rm -rf "$SANDBOX"
     mkdir -p "$SANDBOX"
     cd "$SANDBOX" || exit 1
-    git init --quiet -b main
+    if ! git init --quiet -b main 2>/dev/null; then
+        git init --quiet
+        git checkout -q -b main 2>/dev/null || true
+    fi
     git config user.name "Toolkit Tester"
     git config user.email "tester@toolkit.corp"
 }
@@ -232,8 +235,55 @@ test_engine_multi_deps() {
     engine_register "m2" "Dependência B" mock_ok "TOGGLE_M2"
     engine_register "m3" "Dependente" mock_ok "TOGGLE_M3" "m1,m2"
     engine_run "TESTE MULTI-DEP DESATIVADA" >/dev/null 2>&1
-    assert "SKIPPED_DEP" "${_ENG_STEP_STATE[m3]:-}" "Dependência desativada por toggle deve pular o dependente"
+    assert "DONE_0" "${_ENG_STEP_STATE[m3]:-}" "Dependência desativada por toggle deve ser ignorada (transparência)"
+
+    export TOGGLE_M1=0
+    export TOGGLE_M2=0
+    engine_reset
+    engine_register "m1" "Dependência A" mock_ok "TOGGLE_M1"
+    engine_register "m2" "Dependência B" mock_ok "TOGGLE_M2"
+    engine_register "m3" "Dependente" mock_ok "TOGGLE_M3" "m1,m2"
+    engine_run "TESTE MULTI-DEP TODAS DESATIVADAS" >/dev/null 2>&1
+    assert "DONE_0" "${_ENG_STEP_STATE[m3]:-}" "Todas as dependências desativadas não devem bloquear o dependente"
+    export TOGGLE_M1=1
     export TOGGLE_M2=1
+}
+
+test_vuln_exceptions() {
+    printf "\n--- Teste 11: Exceções Corporativas de Vulnerabilidades ---\n"
+
+    export TOOLKIT_ROOT="$SANDBOX/toolkit"
+    mkdir -p "$TOOLKIT_ROOT/env/vuln-exceptions"
+    cat > "$TOOLKIT_ROOT/env/vuln-exceptions/global.list" << 'EOF'
+CVE-2026-47884,GHSA-j9f9-w8pj-32f8|2099-12-31|Fix requer major upgrade
+CVE-2026-11111|2020-01-01|Exceção expirada
+EOF
+
+    source "$TOOLKIT_ROOT/lib/common/vuln-exceptions.sh"
+
+    vuln_exceptions_load
+    assert "2" "${#_VX_GROUPS[@]}" "Registro deve carregar 2 grupos de exceção"
+    assert "valid" "$(vuln_exceptions_group_status 0)" "Exceção com data futura deve ser válida"
+    assert "expired" "$(vuln_exceptions_group_status 1)" "Exceção com data passada deve estar expirada"
+
+    read -r applied orphan unexcepted <<< "$(vuln_exceptions_classify "CVE-2026-47884")"
+    assert "1" "$applied" "ID reportado dentro do grupo deve aplicar a exceção"
+    assert "0" "$orphan" "Grupo aplicado não deve ser órfão"
+    assert "0" "$unexcepted" "Não deve haver vulnerabilidade fora de exceção"
+
+    read -r applied orphan unexcepted <<< "$(vuln_exceptions_classify "GHSA-j9f9-w8pj-32f8")"
+    assert "1" "$applied" "Alias GHSA do mesmo grupo deve aplicar a exceção"
+
+    read -r applied orphan unexcepted <<< "$(vuln_exceptions_classify "")"
+    assert "0" "$applied" "Sem achados, nenhuma exceção deve ser aplicada"
+    assert "1" "$orphan" "Grupo válido sem achados deve ser sinalizado como órfão"
+
+    read -r applied orphan unexcepted <<< "$(vuln_exceptions_classify "CVE-9999-00001")"
+    assert "1" "$unexcepted" "Achado fora do registro deve ser contado como fora de exceção"
+
+    assert "1" "$(vuln_exceptions_expired_summary | grep -c 'expirada')" "Resumo deve apontar a exceção expirada"
+
+    export TOOLKIT_ROOT="$(dirname "$TEST_DIR")"
 }
 
 setup
@@ -247,6 +297,7 @@ test_gitleaks_pull_scope
 test_osv_classification
 test_osv_offline_fallback
 test_engine_multi_deps
+test_vuln_exceptions
 teardown
 
 printf "\n==================================================\n"
