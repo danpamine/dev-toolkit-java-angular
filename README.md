@@ -47,7 +47,7 @@ Entender o propósito de cada mecanismo agiliza o diagnóstico quando a esteira 
 * **Isolamento Total entre Stacks**: Configurações, diretórios e branches de Java e Angular são desacoplados. Você pode habilitar apenas a stack que utiliza.
 * **Operação em Espaço de Usuário**: Projetado para Windows corporativo restrito (Git Bash / MSYS2) sem exigir permissões de Administrador.
 * **Execução Assíncrona & Buffer Isolado de Logs**: Todas as validações ocorrem em paralelo em background. Se múltiplos linters ou testes falharem ao mesmo tempo, os relatórios são organizados sequencialmente no final da execução, sem truncamento de tabelas ou poluição visual.
-* **Auto-Atualização e Resiliência de Rede**: O Dev Toolkit se mantém sincronizado via Git e gerencia binários com fallback por web scraping (imune a Rate Limit da API do GitHub).
+* **Auto-Atualização e Resiliência de Rede**: O Dev Toolkit se mantém sincronizado via Git e gerencia binários com fallback por web scraping (imune a Rate Limit da API do GitHub). Quando o toolkit é atualizado no início de uma execução, a validação é abortada imediatamente com instrução de reexecução: nunca se valida com código defasado. Além disso, as etapas Maven (compilação, SBOM, Checkstyle, SpotBugs, PMD, OpenAPI e testes) formam uma corrente serializada, evitando que ferramentas concorrentes interfiram no mesmo diretório `target/`.
 
 ---
 
@@ -87,10 +87,10 @@ O assistente guiará a configuração de ponta a ponta:
 ## Fluxos de Validação Automatizados
 
 ```text
-[git commit] ──> Validação Incremental (Apenas arquivos alterados em Staging)
-[git push]   ──> Validação da Branch vs. Branch Base Remota (Strict Version Check + SAST + SCA + Build)
-[git pull]   ──> Integridade Pós-Merge (Gitleaks Full Scan em todo o repositório)
-[dev verify] ──> Validação Completa sob demanda (todos os testes, linters e scanners)
+[git commit] --> Validação Incremental (Apenas arquivos alterados em Staging)
+[git push]   --> Validação da Branch vs. Branch Base Remota (Strict Version Check + SAST + SCA + Build)
+[git pull]   --> Integridade Pós-Merge (Gitleaks Full Scan em todo o repositório)
+[dev verify] --> Validação Completa sob demanda (todos os testes, linters e scanners)
 ```
 
 ### 1. `git commit` (Pre-commit Incremental)
@@ -129,7 +129,7 @@ O comando `dev` fica disponível globalmente no seu terminal:
     dev build          Compila o projeto (mvn test-compile | ng build)
     dev hooks-install  Instala os Git Hooks em um diretório ou projeto
     dev hooks-remove   Remove os Git Hooks configurados
-    dev clean          Limpa caches locais e logs temporários
+    dev clean          Limpa caches locais e logs temporários (preserva a base local do OSV)
     dev setup-node     Instala ou atualiza NVS, Node LTS e PNPM corporativo
 
 ---
@@ -161,11 +161,13 @@ Nenhuma alteração do desenvolvedor é versionada no repositório do toolkit ou
 * `env/java/.env.user`: Contém `BASE_BRANCH` e toggles `FEATURE_*` para Java.
 * `env/angular/.env.user`: Contém `BASE_BRANCH`, `DEV_TOOLKIT_STORE_DIR` e toggles `FEATURE_*` para Angular.
 * `.env.local`: Configuração criada na raiz de um projeto específico ao executar `dev base <branch>`.
+* `env/vuln-exceptions/global.list` e `env/vuln-exceptions/<REPO_NAME>.list`: Exceções de vulnerabilidades (opcionais, criadas por você, veja a seção dedicada).
 
 ### Chaves de Toggles Disponíveis:
 * `FEATURE_VERSION_CHECK`: Validação semântica de versão em `pom.xml` ou `package.json`.
 * `FEATURE_GITLEAKS`: Varredura de credenciais e segredos em staging.
 * `FEATURE_SEMGREP`: Análise estática semântica SAST via Semgrep OSS nativo.
+* `FEATURE_SEMGREP_REQUIRED`: Falha a execução (em vez de pular) quando o Semgrep não puder ser instalado.
 * `FEATURE_AST_GREP`: Linter estrutural de AST via ast-grep.
 * `FEATURE_OSV`: Varredura de vulnerabilidades de dependências via Google OSV-Scanner.
 * `FEATURE_SCA`: Análise profunda de componentes via Trivy SCA.
@@ -180,6 +182,47 @@ Nenhuma alteração do desenvolvedor é versionada no repositório do toolkit ou
 * `FEATURE_LOCKFILE`: Sincronização e integridade do lockfile.
 * `FEATURE_BUILD`: Compilação de produção do Angular (`ng build`).
 * `FEATURE_TEST`: Execução de testes unitários Angular via `package.json`.
+
+---
+
+## Exceções de Vulnerabilidades (Configuração Opcional)
+
+Quando uma dependência só tem correção via upgrade major incompatível com o roadmap, o toolkit permite registrar a exceção de risco **dentro do próprio toolkit**, jamais nos projetos corporativos (Invasão Zero). Os arquivos não existem por padrão e não são versionados: você os cria apenas quando houver decisão a registrar. O mecanismo é útil tanto para o dev individual quanto para times que adotam o toolkit coletivamente.
+
+### Arquivos (criados por você, protegidos no `.gitignore`)
+
+```text
+env/vuln-exceptions/global.list        -> Aplica a todas as análises de todas as stacks
+env/vuln-exceptions/<REPO_NAME>.list   -> Aplica apenas ao projeto de mesmo nome
+```
+
+### Formato (uma exceção por linha)
+
+```text
+ID1[,ID2,...] | DATA_DE_EXPIRACAO (YYYY-MM-DD) | motivo
+```
+
+* **IDs**: `CVE-...` e/ou `GHSA-...`. Aliases da **mesma** vulnerabilidade na mesma linha (Trivy reporta `CVE`, OSV-Scanner reporta `GHSA`); o grupo casa em qualquer uma das ferramentas.
+* **Expiração**: vencida, a vulnerabilidade volta a bloquear automaticamente. A data força a reavaliação da decisão mesmo quando nenhuma correção surge no período, impedindo que a exceção se torne uma aceitação de risco perpétua e esquecida.
+* **Motivo**: obrigatório. É o registro auditável da decisão.
+
+### Exemplo de arquivo
+
+```text
+# ==============================================================================
+# dev-toolkit - Exceções de Vulnerabilidade (Trivy + OSV-Scanner)
+# ==============================================================================
+# Formato: ID1[,ID2,...] | DATA_DE_EXPIRACAO (YYYY-MM-DD) | motivo
+# ==============================================================================
+CVE-2026-47884,GHSA-j9f9-w8pj-32f8|2027-03-31|Fix requer Spring Boot 4; refactor programado para H2/2027
+```
+
+### Semântica garantida
+
+* Vulnerabilidade coberta por exceção válida -> etapa aprovada, exibindo `N exceção(ões) aplicada(s)` no resumo.
+* Vulnerabilidade **fora** de exceção -> reprovação, com relatório completo da ferramenta.
+* Upgrade aplicado e vulnerabilidade que deixou de ser reportada -> exceção fica **órfã** e o resumo sinaliza `exceção(ões) órfã(s) - remova do arquivo`.
+* Edição nos arquivos de exceção invalida o cache de Trivy/OSV na execução seguinte (digest incluído no hash de cache).
 
 ---
 
