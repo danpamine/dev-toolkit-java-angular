@@ -10,3 +10,4 @@ logs/*
 *.local.env
 .env.user
 **/.env.user
+env/**/*.env
